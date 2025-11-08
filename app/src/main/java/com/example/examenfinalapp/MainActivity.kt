@@ -5,19 +5,24 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.navigation.NavHostController
+import androidx.navigation.compose.rememberNavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
 import com.example.examenfinalapp.ui.theme.ExamenFinalAppTheme
+
+// --------- RUTAS CENTRALES ---------
+object Routes {
+    const val Login = "login"
+    const val Registro = "registro"
+    const val Catalogo = "catalogo"               // Estudiante
+    const val MisPrestamos = "mis_prestamos"      // Estudiante
+    const val AdminSolicitudes = "admin_solicitudes" // Admin
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -25,91 +30,157 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             ExamenFinalAppTheme {
-                val nav = rememberNavController()
-                AppScaffold(nav)
+                AppRoot()
             }
         }
     }
 }
 
-/** Rutas centrales del proyecto */
-object Routes {
-    const val Login = "login"
-    const val Registro = "registro"
-    const val Catalogo = "catalogo"            // Estudiante
-    const val MisPrestamos = "mis_prestamos"   // Estudiante
-    const val AdminSolicitudes = "admin_solicitudes" // Admin
-}
-
-/** Estructura base con AppBar y NavHost */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AppScaffold(nav: NavHostController) {
-    val backStack by nav.currentBackStackEntryAsState()
-    val currentRoute = backStack?.destination?.route ?: Routes.Login
+private fun AppRoot() {
+    // ==== Repositorios ====
+    val authRepo = remember { com.example.examenfinalapp.data.firebase.FirebaseAuthRepository() }
+    val userRepo = remember { com.example.examenfinalapp.data.firebase.FirebaseUsuarioRepository() }
+    val equiposRepo = remember { com.example.examenfinalapp.data.firebase.FirebaseEquiposRepository() }
+    val prestamosRepo = remember { com.example.examenfinalapp.data.firebase.FirebasePrestamosRepository() }
+
+    // ==== ViewModels ====
+    val authVm = remember { com.example.examenfinalapp.ui.viewmodel.AuthViewModel(authRepo, userRepo) }
+    val sessionVm = remember { com.example.examenfinalapp.ui.viewmodel.SessionViewModel(authRepo, userRepo) }
+    val catalogoVm = remember { com.example.examenfinalapp.ui.viewmodel.CatalogoViewModel(equiposRepo, prestamosRepo) }
+    val adminVm = remember { com.example.examenfinalapp.ui.viewmodel.AdminViewModel(prestamosRepo) }
+
+    // uid puede ser nulo antes de login
+    val uid = authRepo.uidActual
+    val misVm = remember(uid) {
+        if (uid != null)
+            com.example.examenfinalapp.ui.viewmodel.MisPrestamosViewModel(uid, prestamosRepo)
+        else null
+    }
+
+    // Cargar sesión al abrir app
+    LaunchedEffect(Unit) { sessionVm.loadForCurrentUser() }
+    val session by sessionVm.state.collectAsState()
+
+    val nav = rememberNavController()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
-            TopAppBar(title = {
-                Text(
-                    when (currentRoute) {
-                        Routes.Login -> "Iniciar sesión"
-                        Routes.Registro -> "Registro"
-                        Routes.Catalogo -> "Catálogo de equipos"
-                        Routes.MisPrestamos -> "Mis préstamos"
-                        Routes.AdminSolicitudes -> "Solicitudes (Admin)"
-                        else -> "Laboratorio"
+            val backStack by nav.currentBackStackEntryAsState()
+            val route = backStack?.destination?.route
+
+            TopAppBar(
+                title = {
+                    Text(
+                        when (route) {
+                            Routes.Login -> "Iniciar sesión"
+                            Routes.Registro -> "Registro"
+                            Routes.Catalogo -> "Catálogo de equipos"
+                            Routes.MisPrestamos -> "Mis préstamos"
+                            Routes.AdminSolicitudes -> "Solicitudes (Admin)"
+                            else -> "Laboratorio"
+                        }
+                    )
+                },
+                actions = {
+                    if (session.uid != null) {
+                        if (session.isAdmin) {
+                            TextButton(onClick = { nav.navigate(Routes.AdminSolicitudes) }) {
+                                Text("Solicitudes")
+                            }
+                        } else {
+                            TextButton(onClick = { nav.navigate(Routes.MisPrestamos) }) {
+                                Text("Mis préstamos")
+                            }
+                        }
+                        TextButton(onClick = {
+                            sessionVm.signOut()
+                            nav.navigate(Routes.Login) {
+                                popUpTo(0) { inclusive = true }
+                            }
+                        }) { Text("Salir") }
+                    }
+                }
+            )
+        },
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
+    ) { padding ->
+        // StartDestination según estado/rol
+        NavHost(
+            navController = nav,
+            startDestination = when {
+                session.uid == null -> Routes.Login
+                session.isAdmin -> Routes.AdminSolicitudes
+                else -> Routes.Catalogo
+            },
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            composable(Routes.Login) {
+                com.example.examenfinalapp.ui.screens.LoginScreen(
+                    vm = authVm,
+                    onOk = {
+                        // tras login: recarga sesión y redirige
+                        sessionVm.loadForCurrentUser()
+                        // navegación práctica una vez que uid esté listo
+                        LaunchedEffect(session.uid to session.isAdmin) {
+                            if (session.uid != null) {
+                                if (session.isAdmin) {
+                                    nav.navigate(Routes.AdminSolicitudes) {
+                                        popUpTo(Routes.Login) { inclusive = true }
+                                    }
+                                } else {
+                                    nav.navigate(Routes.Catalogo) {
+                                        popUpTo(Routes.Login) { inclusive = true }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    onGoRegistro = { nav.navigate(Routes.Registro) }
+                )
+            }
+
+            composable(Routes.Registro) {
+                com.example.examenfinalapp.ui.screens.RegistroScreen(
+                    vm = authVm,
+                    onOk = {
+                        sessionVm.loadForCurrentUser()
+                        nav.navigate(Routes.Catalogo) {
+                            popUpTo(Routes.Login) { inclusive = true }
+                        }
                     }
                 )
-            })
-        }
-    ) { _ ->
-        AppNavHost(nav)
-    }
-}
+            }
 
-/** Navegación mínima: pantallas placeholder que iremos sustituyendo */
-@Composable
-private fun AppNavHost(nav: NavHostController) {
-    NavHost(navController = nav, startDestination = Routes.Login) {
+            // Estudiante
+            composable(Routes.Catalogo) {
+                com.example.examenfinalapp.ui.screens.CatalogoScreen(
+                    vm = catalogoVm,
+                    snackbarHostState = snackbarHostState
+                )
+            }
+            composable(Routes.MisPrestamos) {
+                misVm?.let {
+                    com.example.examenfinalapp.ui.screens.MisPrestamosScreen(vm = it)
+                } ?: Text("Debes iniciar sesión.")
+            }
 
-        composable(Routes.Login) {
-            ScreenText(
-                "Pantalla Login (aquí irá Auth). " +
-                        "Botón → ir a Registro o redirigir según rol."
-            )
-        }
-
-        composable(Routes.Registro) {
-            ScreenText(
-                "Pantalla Registro Estudiante (perfil + email/password)."
-            )
-        }
-
-        // Estudiante
-        composable(Routes.Catalogo) {
-            ScreenText(
-                "Catálogo de equipos: listar, ver disponibilidad y 'Solicitar préstamo'."
-            )
-        }
-        composable(Routes.MisPrestamos) {
-            ScreenText("Mis préstamos: Pendiente/Aprobado/Rechazado/Devuelto.")
-        }
-
-        // Admin
-        composable(Routes.AdminSolicitudes) {
-            ScreenText(
-                "Panel Admin: Aprobar/Rechazar solicitudes y Marcar Devuelto."
-            )
+            // Admin
+            composable(Routes.AdminSolicitudes) {
+                if (session.isAdmin) {
+                    com.example.examenfinalapp.ui.screens.AdminSolicitudesScreen(
+                        vm = adminVm,
+                        snackbarHostState = snackbarHostState
+                    )
+                } else {
+                    Text("Acceso solo para administradores.")
+                }
+            }
         }
     }
-}
-
-/** Placeholder temporal: lo vamos a reemplazar por UI real */
-@Composable
-private fun ScreenText(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.bodyLarge
-    )
 }
