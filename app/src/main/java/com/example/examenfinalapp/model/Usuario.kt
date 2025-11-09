@@ -1,41 +1,38 @@
 package com.example.examenfinalapp.model
 
-/**
- * Documento en /usuarios/{uid}
- *
- * Notas:
- * - 'rol' debe ser exactamente "estudiante" o "admin".
- * - 'fotoUrl' se llenará cuando el usuario suba su foto (Storage).
- */
+enum class RolUsuario { Estudiante, Administrador }
+
 data class Usuario(
     val uid: String = "",
-    val rol: String = "estudiante",        // "estudiante" | "admin"
-    val nombreCompleto: String = "",
+    val nombre: String = "",
     val carnet: String = "",
     val carrera: String = "",
-    val fotoUrl: String = ""
+    val email: String = "",
+    val fotoUrl: String? = null,
+    val rol: RolUsuario = RolUsuario.Estudiante
 ) {
-    val esAdmin: Boolean get() = rol.equals("admin", ignoreCase = true)
+    val esAdmin: Boolean get() = rol == RolUsuario.Administrador
 
-    /** Mapa limpio para guardar en Firestore (opcional pero útil). */
     fun toMap(): Map<String, Any?> = mapOf(
-        "uid" to uid,
-        "rol" to rol,
-        "nombreCompleto" to nombreCompleto,
+        "nombre" to nombre,
         "carnet" to carnet,
         "carrera" to carrera,
-        "fotoUrl" to fotoUrl
+        "email" to email,
+        "fotoUrl" to fotoUrl,
+        "rol" to rol.name
     )
 
     companion object {
-        /** Construye desde un mapa Firestore sin crashear si faltan campos. */
         fun fromMap(map: Map<String, Any?>): Usuario = Usuario(
-            uid = map["uid"] as? String ?: "",
-            rol = map["rol"] as? String ?: "estudiante",
-            nombreCompleto = map["nombreCompleto"] as? String ?: "",
+            uid = "",
+            nombre = map["nombre"] as? String ?: "",
             carnet = map["carnet"] as? String ?: "",
             carrera = map["carrera"] as? String ?: "",
-            fotoUrl = map["fotoUrl"] as? String ?: ""
+            email = map["email"] as? String ?: "",
+            fotoUrl = map["fotoUrl"] as? String,
+            rol = (map["rol"] as? String)?.let {
+                runCatching { RolUsuario.valueOf(it) }.getOrNull()
+            } ?: RolUsuario.Estudiante
         )
     }
 }

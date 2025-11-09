@@ -1,10 +1,26 @@
-package com.example.examenfinalapp.data
+package com.example.examenfinalapp.data.firebase
 
-import com.example.examenfinalapp.model.Usuario
-import kotlinx.coroutines.flow.Flow
+import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.tasks.await
 
-interface UsuarioRepository {
-    suspend fun crearOActualizar(usuario: Usuario): Result<Unit>
-    suspend fun crearPerfilSiNoExiste(uid: String): Result<Unit>
-    fun observarUsuario(uid: String): Flow<Usuario?>
+class FirebaseAuthRepository {
+
+    private val auth = FirebaseAuth.getInstance()
+
+    val uidActual: String?
+        get() = auth.currentUser?.uid
+
+    suspend fun signUp(email: String, password: String): Result<String> = runCatching {
+        val res = auth.createUserWithEmailAndPassword(email, password).await()
+        res.user?.uid ?: throw Exception("UID nulo")
+    }
+
+    suspend fun signIn(email: String, password: String): Result<String> = runCatching {
+        val res = auth.signInWithEmailAndPassword(email, password).await()
+        res.user?.uid ?: throw Exception("UID nulo")
+    }
+
+    fun signOut() {
+        auth.signOut()
+    }
 }
